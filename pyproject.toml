@@ -10,17 +10,6 @@ dependencies = [
   "torch",
   "datasets>=3.6.0",
   "tqdm>=4.67.1",
+  "accelerate>=1.8.1",
 ]
 
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cuda"
-url = "https://download.pytorch.org/whl/cuda"
-explicit = true

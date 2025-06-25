@@ -27,16 +27,43 @@ class Group:
 
     @property
     def fmt_group(self):
-        return f'{self.name.lower()}'
+        return f'{self.name.lower().replace("___", "_")}'
 
-DEFAULT_DATASET_PATH = './outputs/words_vs_group'
+DEFAULT_DATASET_PATH = Path('./outputs/words_vs_group')
+DEFAULT_CHECKPOINT = Path('./outputs/pillow_embedding')
+
+@app.command()
+def score(
+    checkpoint: Path = DEFAULT_CHECKPOINT,
+    words: str | None = None,
+    group: str | None = None,
+):
+    model = SentenceTransformer(str(checkpoint))
+    if words is not None and group is not None:
+        query_embeddings = model.encode([group], prompt_name="query")
+        document_embeddings = model.encode([words])
+        similarity = model.similarity(query_embeddings, document_embeddings)
+        print(similarity.item())
+    if words is None or group is None:
+        while True:
+            if group is None:
+                this_group = input('Group (eg "eat voraciously"): ')
+            else:
+                this_group = group
+            if words is None:
+                this_words = input('Words (eg "wolf, gulp, gobble, scarf"): ')
+            else:
+                this_words = words
+            query_embeddings = model.encode([this_group], prompt_name="query")
+            document_embeddings = model.encode([this_words])
+            similarity = model.similarity(query_embeddings, document_embeddings)
+            print(similarity.item())
 
 @app.command()
 def train(
     base_model: str = 'Qwen/Qwen3-Embedding-0.6B',
-    checkpoint: Path = '.outputs/pillow_embedding',
+    checkpoint: Path = DEFAULT_CHECKPOINT,
     dataset_path: Path = DEFAULT_DATASET_PATH,
-    device: str = 'cpu',
 ):
     checkpoint.mkdir(exist_ok=True, parents=True)
     model = SentenceTransformer(base_model)
@@ -44,7 +71,7 @@ def train(
     train_dataset = Dataset.load_from_disk(dataset_path)
     args = SentenceTransformerTrainingArguments(
         # Required parameter:
-        output_dir=checkpoint,
+        output_dir=str(checkpoint),
         # Optional training parameters:
         num_train_epochs=1,
         per_device_train_batch_size=16,
@@ -61,7 +88,7 @@ def train(
         loss=loss,
     )
     trainer.train()
-    model.save_pretrained(checkpoint)
+    model.save_pretrained(str(checkpoint))
 
 @app.command()
 def make_dataset(
@@ -124,6 +151,13 @@ def make_dataset(
             dataset['score'].append(group.score)
 
     Dataset.from_dict(dataset).save_to_disk(dataset_path)
+
+@app.command()
+def show_dataset(
+    dataset_path: Path = DEFAULT_DATASET_PATH,
+):
+    for row in Dataset.load_from_disk(dataset_path):
+        print(row)
 
 if __name__ == "__main__":
     app()
