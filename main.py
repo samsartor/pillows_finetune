@@ -1,15 +1,8 @@
 import typer
-from pathlib import Path
-import torch
 from datasets import load_dataset, Dataset
 from dataclasses import dataclass
-import csv
-from random import shuffle, choice, sample, random
+from random import shuffle, choice, sample
 from tqdm.auto import tqdm
-
-from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer
-from sentence_transformers.losses import CoSENTLoss
-from sentence_transformers.training_args import SentenceTransformerTrainingArguments, BatchSamplers
 
 app = typer.Typer()
 
@@ -18,7 +11,7 @@ class Group:
     level: int
     name: str
     words: list[str]
-    score: float = 1.0
+    score: float = 1
     ignore: bool = False
 
     @property
@@ -29,21 +22,24 @@ class Group:
     def fmt_group(self):
         return f'{self.name.lower().replace("___", "_")}'
 
-DEFAULT_DATASET_PATH = Path('./outputs/words_vs_group')
-DEFAULT_CHECKPOINT = Path('./outputs/pillow_embedding')
+DEFAULT_DATASET_PATH = './outputs/words_vs_group'
+DEFAULT_CHECKPOINT = './outputs/pillow_embedding'
 
 @app.command()
 def score(
-    checkpoint: Path = DEFAULT_CHECKPOINT,
+    checkpoint: list[str] = [DEFAULT_CHECKPOINT],
     words: str | None = None,
     group: str | None = None,
 ):
-    model = SentenceTransformer(str(checkpoint))
+    from sentence_transformers import SentenceTransformer
+    
+    models = [SentenceTransformer(c) for c in checkpoint]
     if words is not None and group is not None:
-        query_embeddings = model.encode([group], prompt_name="query")
-        document_embeddings = model.encode([words])
-        similarity = model.similarity(query_embeddings, document_embeddings)
-        print(similarity.item())
+        for model in models:
+            query_embeddings = model.encode([group], prompt_name="query")
+            document_embeddings = model.encode([words])
+            similarity = model.similarity(query_embeddings, document_embeddings)
+            print(similarity.item())
     if words is None or group is None:
         while True:
             if group is None:
@@ -54,24 +50,28 @@ def score(
                 this_words = input('Words (eg "wolf, gulp, gobble, scarf"): ')
             else:
                 this_words = words
-            query_embeddings = model.encode([this_group], prompt_name="query")
-            document_embeddings = model.encode([this_words])
-            similarity = model.similarity(query_embeddings, document_embeddings)
-            print(similarity.item())
+            for model in models:
+                query_embeddings = model.encode([this_group], prompt_name="query")
+                document_embeddings = model.encode([this_words])
+                similarity = model.similarity(query_embeddings, document_embeddings)
+                print(similarity.item())
 
 @app.command()
 def train(
     base_model: str = 'Qwen/Qwen3-Embedding-0.6B',
-    checkpoint: Path = DEFAULT_CHECKPOINT,
-    dataset_path: Path = DEFAULT_DATASET_PATH,
+    checkpoint: str = DEFAULT_CHECKPOINT,
+    dataset_path: str = DEFAULT_DATASET_PATH,
 ):
-    checkpoint.mkdir(exist_ok=True, parents=True)
+    from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer
+    from sentence_transformers.losses import ContrastiveLoss
+    from sentence_transformers.training_args import SentenceTransformerTrainingArguments, BatchSamplers
+
     model = SentenceTransformer(base_model)
-    loss = CoSENTLoss(model)
+    loss = ContrastiveLoss(model)
     train_dataset = Dataset.load_from_disk(dataset_path)
     args = SentenceTransformerTrainingArguments(
         # Required parameter:
-        output_dir=str(checkpoint),
+        output_dir=checkpoint,
         # Optional training parameters:
         num_train_epochs=1,
         per_device_train_batch_size=16,
@@ -88,11 +88,11 @@ def train(
         loss=loss,
     )
     trainer.train()
-    model.save_pretrained(str(checkpoint))
+    model.save_pretrained(checkpoint)
 
 @app.command()
 def make_dataset(
-    dataset_path: Path = DEFAULT_DATASET_PATH, 
+    dataset_path: str = DEFAULT_DATASET_PATH, 
 ):
     groups: dict[tuple[int, int], Group] = {}
     for row in tqdm(load_dataset("eric27n/NYT-Connections", split="train"), 'Scanning dataset'):
@@ -122,30 +122,14 @@ def make_dataset(
                 for w in other_group.words:
                     other_words.append(w)
 
-        mostly_correct = Group(
-            level=level,
-            name=correct.name,
-            words=sample(correct.words, k=3) + [choice(other_words)],
-            score=0.6,
-        )
-        shuffle(mostly_correct.words)
-        
-        label_incorrect = Group(
-            level=level,
-            name=choice(other_names),
-            words=correct.words,
-            score=0.3,
-        )
-        shuffle(label_incorrect.words)
-
         incorrect = Group(
             level=level,
             name=correct.name,
             words=sample(other_words, k=4),
-            score=0.0,
+            score=0,
         )
 
-        for group in [correct, mostly_correct, label_incorrect, incorrect]:
+        for group in [correct, incorrect]:
             dataset['sentence1'].append(group.fmt_group)
             dataset['sentence2'].append(group.fmt_words)
             dataset['score'].append(group.score)
@@ -154,7 +138,7 @@ def make_dataset(
 
 @app.command()
 def show_dataset(
-    dataset_path: Path = DEFAULT_DATASET_PATH,
+    dataset_path: str = DEFAULT_DATASET_PATH,
 ):
     for row in Dataset.load_from_disk(dataset_path):
         print(row)
