@@ -3,6 +3,8 @@ from datasets import load_dataset, Dataset
 from dataclasses import dataclass
 from random import shuffle, choice, sample
 from tqdm.auto import tqdm
+from pathlib import Path
+import requests
 
 app = typer.Typer()
 
@@ -22,24 +24,59 @@ class Group:
     def fmt_group(self):
         return f'{self.name.lower().replace("___", "_")}'
 
-DEFAULT_DATASET_PATH = './outputs/words_vs_group'
 DEFAULT_CHECKPOINT = './outputs/pillow_embedding'
+DEFAULT_WORD_LIST_URL = 'https://github.com/first20hours/google-10000-english/raw/refs/heads/master/google-10000-english-no-swears.txt'
+DEFAULT_WORD_LIST_PATH = './outputs/word_list.txt'
+
+class Scorer:
+    def __init__(self, checkpoint: str, normalize: int, shuffle: int):
+        from sentence_transformers import SentenceTransformer
+
+        self.model = SentenceTransformer(checkpoint)
+        if normalize > 0:
+            words = word_list()
+            words = [
+                ', '.join(sample(words, k=4))
+                for _ in range(normalize)
+            ]
+            self.rand_embeddings = self.model.encode(words)
+        else:
+            self.rand_embeddings = None
+        self.shuffle = shuffle
+
+    def score(self, group: str, words: str) -> float:
+        to_score = []
+        if self.shuffle > 0:
+            split_words = list(map(lambda w: w.strip(), words.split(',')))
+            for _ in range(self.shuffle):
+                shuffle(split_words)
+                to_score.append(', '.join(split_words))
+        else:
+            to_score.append(words)
+        group_embeddings = self.model.encode([group], prompt_name="query")
+        word_embeddings = self.model.encode(to_score)
+        word_similarity = self.model.similarity(group_embeddings, word_embeddings)
+        if self.rand_embeddings is None:
+            return word_similarity.mean().item()
+        else:
+            word_similarity = word_similarity.log().mean()
+            rand_similarity = self.model.similarity(group_embeddings, self.rand_embeddings).log().mean()
+            return (word_similarity - rand_similarity).item()
 
 @app.command()
 def score(
     checkpoint: list[str] = [DEFAULT_CHECKPOINT],
     words: str | None = None,
     group: str | None = None,
+    normalize: int = 10,
+    shuffle: int = 4,
 ):
     from sentence_transformers import SentenceTransformer
     
-    models = [SentenceTransformer(c) for c in checkpoint]
+    scorers = [Scorer(c, normalize=normalize, shuffle=shuffle) for c in checkpoint]
     if words is not None and group is not None:
-        for model in models:
-            query_embeddings = model.encode([group], prompt_name="query")
-            document_embeddings = model.encode([words])
-            similarity = model.similarity(query_embeddings, document_embeddings)
-            print(similarity.item())
+        for scorer in scorers:
+            print(scorer.score(group, words))
     if words is None or group is None:
         while True:
             if group is None:
@@ -50,17 +87,13 @@ def score(
                 this_words = input('Words (eg "wolf, gulp, gobble, scarf"): ')
             else:
                 this_words = words
-            for model in models:
-                query_embeddings = model.encode([this_group], prompt_name="query")
-                document_embeddings = model.encode([this_words])
-                similarity = model.similarity(query_embeddings, document_embeddings)
-                print(similarity.item())
+            for scorer in scorers:
+                print(scorer.score(this_group, this_words))
 
 @app.command()
 def train(
     base_model: str = 'Qwen/Qwen3-Embedding-0.6B',
     checkpoint: str = DEFAULT_CHECKPOINT,
-    dataset_path: str = DEFAULT_DATASET_PATH,
 ):
     from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer
     from sentence_transformers.losses import ContrastiveLoss
@@ -68,7 +101,7 @@ def train(
 
     model = SentenceTransformer(base_model)
     loss = ContrastiveLoss(model)
-    train_dataset = Dataset.load_from_disk(dataset_path)
+    train_dataset = make_dataset()
     args = SentenceTransformerTrainingArguments(
         # Required parameter:
         output_dir=checkpoint,
@@ -90,10 +123,7 @@ def train(
     trainer.train()
     model.save_pretrained(checkpoint)
 
-@app.command()
-def make_dataset(
-    dataset_path: str = DEFAULT_DATASET_PATH, 
-):
+def make_dataset() -> Dataset:
     groups: dict[tuple[int, int], Group] = {}
     for row in tqdm(load_dataset("eric27n/NYT-Connections", split="train"), 'Scanning dataset'):
         id = row['Game ID']
@@ -134,14 +164,25 @@ def make_dataset(
             dataset['sentence2'].append(group.fmt_words)
             dataset['score'].append(group.score)
 
-    Dataset.from_dict(dataset).save_to_disk(dataset_path)
+    return Dataset.from_dict(dataset)
+
+def word_list() -> list[str]:
+    path = Path(DEFAULT_WORD_LIST_PATH)
+    if not path.exists():
+        path.parent.mkdir(exist_ok=True)
+        response = requests.get(DEFAULT_WORD_LIST_URL)
+        with path.open('w') as f:
+            f.write(response.text)
+    return path.read_text().split()[:1000]
 
 @app.command()
-def show_dataset(
-    dataset_path: str = DEFAULT_DATASET_PATH,
-):
-    for row in Dataset.load_from_disk(dataset_path):
+def show_dataset():
+    for row in make_dataset():
         print(row)
+
+@app.command()
+def random_words():
+    print(', '.join(sample(word_list(), k=4)))
 
 if __name__ == "__main__":
     app()
