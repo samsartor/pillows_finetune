@@ -65,7 +65,7 @@ class Scorer:
 
 @app.command()
 def score(
-    checkpoint: list[str] = [DEFAULT_CHECKPOINT],
+    checkpoint: list[str] = ['samsartor/connections-categories-qwen3-0.6B'],
     words: str | None = None,
     group: str | None = None,
     normalize: int = 10,
