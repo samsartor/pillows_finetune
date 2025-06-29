@@ -15,7 +15,7 @@ uv sync
 Test how well a category matches a group of words:
 
 ```bash
-python main.py score
+uv run main.py score
 ```
 
 This will prompt you to enter a category and words, then output similarity scores.
@@ -25,7 +25,7 @@ This will prompt you to enter a category and words, then output similarity score
 Score a specific category/words combination:
 
 ```bash
-python main.py score --group "dog breeds" --words "poodle, beagle, husky, terrier"
+uv run main.py score --group "dog breeds" --words "poodle, beagle, husky, terrier"
 ```
 
 ### Training
@@ -33,7 +33,7 @@ python main.py score --group "dog breeds" --words "poodle, beagle, husky, terrie
 Fine-tune a new model:
 
 ```bash
-python main.py train --base-model "Qwen/Qwen3-Embedding-0.6B"
+uv run main.py train --base-model "Qwen/Qwen3-Embedding-0.6B"
 ```
 
 ### Generate Random Words
@@ -41,7 +41,7 @@ python main.py train --base-model "Qwen/Qwen3-Embedding-0.6B"
 Get 4 random words for testing:
 
 ```bash
-python main.py random-words
+uv run main.py random-words
 ```
 
 ## How It Works
